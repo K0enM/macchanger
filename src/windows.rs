@@ -1,11 +1,9 @@
-use std::ptr;
-
-use macaddr::{MacAddr, MacAddr8};
+use macaddr::MacAddr;
 use IpHelper::{GetAdaptersAddresses, GAA_FLAG_INCLUDE_ALL_INTERFACES, IP_ADAPTER_ADDRESSES_LH};
 use crate::MacchangerError;
-use windows::Win32::{Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS, WIN32_ERROR}, NetworkManagement::*, Networking::WinSock::*};
+use windows::Win32::{Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS}, NetworkManagement::*, Networking::WinSock::*};
 
-pub fn change_mac_windows(mac: MacAddr, interface: String) -> Result<(), MacchangerError> {
+pub fn change_mac_windows(_mac: MacAddr, interface: String) -> Result<(), MacchangerError> {
   let mac = get_mac(interface)?;
   dbg!(mac.to_string());
   Ok(())
