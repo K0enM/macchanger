@@ -1,24 +1,147 @@
-use std::ptr;
-
 use crate::MacchangerError;
 use macaddr::MacAddr;
+use std::ptr;
+
 use windows::{
-    core::{s, PCSTR, PSTR},
+    core::{s, GUID, PCSTR, PSTR},
     Win32::{
-        Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS},
+        Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS, S_OK},
         NetworkManagement::*,
         Networking::WinSock::*,
-        System::Registry::{
-            RegEnumKeyExA, RegOpenKeyExA, RegQueryValueExA, HKEY, HKEY_LOCAL_MACHINE,
-            KEY_ALL_ACCESS,
+        System::{
+            Com::*,
+            Registry::{
+                RegCloseKey, RegEnumKeyExA, RegOpenKeyExA, RegQueryValueExA, RegSetValueExA, HKEY,
+                HKEY_LOCAL_MACHINE, KEY_ALL_ACCESS, REG_SZ,
+            },
         },
     },
 };
 
 use IpHelper::{GetAdaptersAddresses, GAA_FLAG_INCLUDE_ALL_INTERFACES, IP_ADAPTER_ADDRESSES_LH};
+use WindowsFirewall::{IEnumNetConnection, INetConnection, INetConnectionManager, NCME_DEFAULT};
 
-pub fn change_mac_windows(_mac: MacAddr, interface: String) -> Result<(), MacchangerError> {
+pub fn change_mac_windows(mac: MacAddr, interface: String) -> Result<(), MacchangerError> {
     let adapter = get_adapter(interface)?;
+    let registry_key = get_registry_key(&adapter)?;
+
+    let res = unsafe {
+        RegSetValueExA(
+            registry_key,
+            s!("NetworkAddress"),
+            0,
+            REG_SZ,
+            Some(mac.to_string().as_bytes()),
+        )
+    };
+
+    if res == ERROR_SUCCESS {
+        change_adapter_connection_status(&adapter, false)?;
+        change_adapter_connection_status(&adapter, true)?;
+    } else {
+        return Err(MacchangerError::ConnectionResetError);
+    }
+    Ok(())
+}
+
+fn change_adapter_connection_status(
+    adapter: &Adapter,
+    status: bool,
+) -> Result<(), MacchangerError> {
+    let hr = unsafe { CoInitialize(None) };
+
+    if hr != S_OK {
+        return Err(MacchangerError::ConnectionResetError);
+    }
+
+    let p_net_connection_manager: INetConnectionManager;
+
+    const CLSID_CONNECTION_MANAGER: GUID = GUID::from_u128(0xba126ad1_2166_11d1_b1d0_00805fc1270e);
+    unsafe {
+        match CoCreateInstance(
+            &CLSID_CONNECTION_MANAGER,
+            None,
+            CLSCTX_LOCAL_SERVER | CLSCTX_NO_CODE_DOWNLOAD,
+        ) {
+            Ok(im) => p_net_connection_manager = im,
+            Err(e) => {
+                dbg!(e);
+                return Err(MacchangerError::ConnectionResetError);
+            }
+        }
+    };
+
+    let p_enum_net_connection: IEnumNetConnection;
+    unsafe {
+        p_enum_net_connection = p_net_connection_manager
+            .EnumConnections(NCME_DEFAULT)
+            .map_err(|_| {
+                CoUninitialize();
+                MacchangerError::ConnectionResetError
+            })?;
+    };
+
+    let mut fetched_count: u32 = 0;
+    let mut connection_array = [const { None }; 64];
+
+    unsafe {
+        p_enum_net_connection
+            .Next(&mut connection_array, &mut fetched_count)
+            .map_err(|e| {
+                dbg!(e);
+                MacchangerError::ConnectionResetError
+            })?
+    };
+
+    for c in connection_array {
+        match c {
+            Some(c) => change_connection_status(&c, adapter, status)?,
+            None => (),
+        }
+    }
+
+    Ok(())
+}
+
+fn change_connection_status(
+    connection: &INetConnection,
+    adapter: &Adapter,
+    status: bool,
+) -> Result<(), MacchangerError> {
+    let properties = unsafe { *connection.GetProperties().unwrap() };
+    dbg!(unsafe { properties.pszwDeviceName.to_string().unwrap() });
+    if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description
+        && status == true)
+    {
+        unsafe {
+            loop {
+                let res = connection.Connect().map_err(|e| {
+                    println!("{}", e.message());
+                    MacchangerError::ConnectionResetError
+                });
+                if res.is_ok() {
+                    break;
+                }
+            }
+        };
+        return Ok(());
+    } else if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description
+        && status == false)
+    {
+        unsafe {
+            connection.Disconnect().map_err(|e| {
+                println!("{}", e.message());
+                MacchangerError::ConnectionResetError
+            })?
+        };
+
+        return Ok(());
+    }
+
+    Ok(())
+}
+
+pub fn get_registry_key(adapter: &Adapter) -> Result<HKEY, MacchangerError> {
     let mut main_key_handle: HKEY = HKEY(ptr::null_mut());
     let subkey: PCSTR =
         s!("SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}");
@@ -66,10 +189,11 @@ pub fn change_mac_windows(_mac: MacAddr, interface: String) -> Result<(), Maccha
                 if res == ERROR_SUCCESS {
                     let mut value_buffer: [u8; 1024] = [0; 1024];
                     let mut size_read: u32 = 1024;
+
                     res = unsafe {
                         RegQueryValueExA(
                             sub_key_handle,
-                            s!("DriverDesc"),
+                            s!("NetCfgInstanceId"),
                             None,
                             None,
                             Some(value_buffer.as_mut_ptr()),
@@ -79,23 +203,43 @@ pub fn change_mac_windows(_mac: MacAddr, interface: String) -> Result<(), Maccha
 
                     if res == ERROR_SUCCESS {
                         let value = std::str::from_utf8(&value_buffer[0..(size_read - 1) as usize])
-                            .map_err(|_| MacchangerError::Generic)?
+                            .map_err(|_| MacchangerError::RegistryError)?
                             .to_owned();
-                        if value == adapter.description {
-                            println!("Found correct key!");
-                            break;
+                        if value == adapter.instance_id {
+                            unsafe {
+                                RegCloseKey(main_key_handle);
+                            }
+                            return Ok(sub_key_handle);
                         }
                     } else {
                         dbg!(res);
-                        return Err(MacchangerError::Generic);
+
+                        unsafe {
+                            RegCloseKey(main_key_handle);
+                            RegCloseKey(sub_key_handle);
+                        }
+                        return Err(MacchangerError::RegistryError);
                     }
                 } else {
                     dbg!(res);
-                    return Err(MacchangerError::Generic);
+
+                    unsafe {
+                        RegCloseKey(main_key_handle);
+                        RegCloseKey(sub_key_handle);
+                    }
+                    return Err(MacchangerError::RegistryError);
+                }
+
+                unsafe {
+                    RegCloseKey(sub_key_handle);
                 }
             } else {
                 dbg!(res);
-                return Err(MacchangerError::Generic);
+
+                unsafe {
+                    RegCloseKey(main_key_handle);
+                }
+                return Err(MacchangerError::RegistryError);
             }
 
             cchname = 1024;
@@ -103,22 +247,46 @@ pub fn change_mac_windows(_mac: MacAddr, interface: String) -> Result<(), Maccha
         }
     } else {
         dbg!(res);
-        return Err(MacchangerError::Generic);
+        unsafe {
+            RegCloseKey(main_key_handle);
+        }
+        return Err(MacchangerError::RegistryError);
     }
-
-    Ok(())
 }
 
 #[derive(Debug, Clone)]
-struct Adapter {
-    name: String,
-    description: String,
-    mac_address: MacAddr,
+pub struct Adapter {
+    pub name: String,
+    pub description: String,
+    pub mac_address: MacAddr,
+    pub instance_id: String,
+    real_adapter: PhysicalAdapter,
+}
+
+#[derive(Clone)]
+struct PhysicalAdapter {
+    inner: IP_ADAPTER_ADDRESSES_LH,
+}
+
+impl std::fmt::Debug for PhysicalAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(unsafe { &self.inner.FriendlyName.to_string().unwrap() })
+    }
 }
 
 fn get_adapter(interface: String) -> Result<Adapter, MacchangerError> {
-    let (mut adapter_list, adapter_count) = get_adapters()?;
-    let original_adapter_list = adapter_list;
+    let adapters = get_adapters()?;
+
+    adapters
+        .iter()
+        .find(|a| a.name == interface)
+        .cloned()
+        .ok_or(MacchangerError::Generic)
+}
+
+pub fn get_adapters() -> Result<Vec<Adapter>, MacchangerError> {
+    let (mut adapter_list, adapter_count) = get_raw_adapters()?;
+    let mut adapters: Vec<Adapter> = vec![];
 
     loop {
         if adapter_list.is_null() {
@@ -129,46 +297,58 @@ fn get_adapter(interface: String) -> Result<Adapter, MacchangerError> {
             (*adapter_list)
                 .FriendlyName
                 .to_string()
-                .map_err(|_| MacchangerError::Generic)?
+                .map_err(|_| MacchangerError::AdapterError)?
         };
         let adapter_description = unsafe {
             (*adapter_list)
                 .Description
                 .to_string()
-                .map_err(|_| MacchangerError::Generic)?
+                .map_err(|_| MacchangerError::AdapterError)?
         };
 
-        if adapter_name == interface {
-            let mac_bytes: [u8; 6] =
-                unsafe { (*adapter_list).PhysicalAddress[..6].try_into().unwrap() };
-            let mac = MacAddr::from(mac_bytes);
-            return Ok(Adapter {
-                name: adapter_name,
-                description: adapter_description,
-                mac_address: mac,
-            });
-        }
+        let adapter_instance_id = unsafe {
+            (*adapter_list)
+                .AdapterName
+                .to_string()
+                .map_err(|_| MacchangerError::AdapterError)?
+        };
+
+        let mac_bytes: [u8; 6] = unsafe {
+            (*adapter_list).PhysicalAddress[..6]
+                .try_into()
+                .map_err(|_| MacchangerError::AdapterError)?
+        };
+        let mac = MacAddr::from(mac_bytes);
+        adapters.push(Adapter {
+            name: adapter_name,
+            description: adapter_description,
+            mac_address: mac,
+            instance_id: adapter_instance_id,
+            real_adapter: PhysicalAdapter {
+                inner: unsafe { (*adapter_list).clone() },
+            },
+        });
 
         adapter_list = unsafe { (*adapter_list).Next };
     }
 
     unsafe {
         std::alloc::dealloc(
-            original_adapter_list as *mut u8,
+            adapter_list as *mut u8,
             std::alloc::Layout::from_size_align(
                 adapter_count
                     .try_into()
                     .map_err(|_| MacchangerError::Generic)?,
                 core::mem::align_of::<IP_ADAPTER_ADDRESSES_LH>(),
             )
-            .unwrap(),
+            .map_err(|_| MacchangerError::AllocError)?,
         )
     }
 
-    Err(MacchangerError::Generic)
+    Ok(adapters)
 }
 
-fn get_adapters() -> Result<(*mut IP_ADAPTER_ADDRESSES_LH, u32), MacchangerError> {
+fn get_raw_adapters() -> Result<(*mut IP_ADAPTER_ADDRESSES_LH, u32), MacchangerError> {
     let mut buf_len: u32 = 0;
     let mut adapter_list: *mut IP_ADAPTER_ADDRESSES_LH = &mut IP_ADAPTER_ADDRESSES_LH::default();
     let mut result: u32 = unsafe {
@@ -188,7 +368,7 @@ fn get_adapters() -> Result<(*mut IP_ADAPTER_ADDRESSES_LH, u32), MacchangerError
                     buf_len.try_into().map_err(|_| MacchangerError::Generic)?,
                     core::mem::align_of::<IP_ADAPTER_ADDRESSES_LH>(),
                 )
-                .unwrap(),
+                .map_err(|_| MacchangerError::AllocError)?,
             )
         } as *mut IP_ADAPTER_ADDRESSES_LH;
     }
@@ -204,7 +384,7 @@ fn get_adapters() -> Result<(*mut IP_ADAPTER_ADDRESSES_LH, u32), MacchangerError
     };
 
     if result != ERROR_SUCCESS.0 {
-        return Err(MacchangerError::Generic);
+        return Err(MacchangerError::AdapterError);
     }
 
     Ok((adapter_list, buf_len))

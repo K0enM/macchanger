@@ -1,29 +1,54 @@
-use std::str::FromStr;
-
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use macaddr::MacAddr;
-use macchanger_lib::change_mac;
+use macchanger_lib::{change_mac, generate_random_mac, list_interfaces};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
+#[command(propagate_version = true)]
 struct Args {
-    #[arg(short, long)]
-    interface: String,
+    #[command(subcommand)]
+    command: Commands,
+}
 
-    #[arg(short, long)]
-    mac: Option<MacAddr>,
+#[derive(Subcommand, Debug)]
+enum Commands {
+    ListInterfaces,
+    ListAdapters,
+    ListMacs,
+    Change {
+        interface: String,
+        mac: Option<MacAddr>,
+    },
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    let interface = args.interface;
-    let mac = match args.mac {
-        Some(mac) => mac,
-        None => MacAddr::from_str("00:0E:F6:E0:35:60").unwrap(),
-    };
+    match &args.command {
+        Commands::ListInterfaces => {
+            let interfaces = list_interfaces()?;
+            println!("Found {} interfaces", interfaces.len());
+            for i in interfaces {
+                println!("{}", i.name);
+            }
+        }
+        Commands::ListMacs => {
+            let interfaces = list_interfaces()?;
+            println!("Found {} MAC addresses", interfaces.len());
+            for i in interfaces {
+                println!("Interface: {}, MAC address: {}", i.name, i.mac.to_string());
+            }
+        }
+        Commands::ListAdapters => todo!(),
+        Commands::Change { interface, mac } => {
+            let mac = match mac {
+                Some(mac) => mac.clone(),
+                None => generate_random_mac(),
+            };
+            change_mac(mac, interface.clone())?;
+        }
+    }
 
-    change_mac(mac, interface)?;
     Ok(())
 }
