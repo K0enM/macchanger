@@ -37,13 +37,13 @@ fn main() -> Result<()> {
             let interfaces = list_interfaces()?;
             println!("Found {} MAC addresses", interfaces.len());
             for i in interfaces {
-                println!("Interface: {}, MAC address: {}", i.name, i.mac.to_string());
+                println!("Interface: {}, MAC address: {}", i.name, i.mac);
             }
         }
         Commands::ListAdapters => todo!(),
         Commands::Change { interface, mac } => {
             let mac = match mac {
-                Some(mac) => mac.clone(),
+                Some(mac) => *mac,
                 None => generate_random_mac(),
             };
             change_mac(mac, interface.clone())?;

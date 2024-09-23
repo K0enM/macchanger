@@ -94,10 +94,7 @@ fn change_adapter_connection_status(
     };
 
     for c in connection_array {
-        match c {
-            Some(c) => change_connection_status(&c, adapter, status)?,
-            None => (),
-        }
+        if let Some(c) = c { change_connection_status(&c, adapter, status)? }
     }
 
     Ok(())
@@ -111,7 +108,7 @@ fn change_connection_status(
     let properties = unsafe { *connection.GetProperties().unwrap() };
     dbg!(unsafe { properties.pszwDeviceName.to_string().unwrap() });
     if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description
-        && status == true)
+        && status)
     {
         unsafe {
             loop {
@@ -126,7 +123,7 @@ fn change_connection_status(
         };
         return Ok(());
     } else if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description
-        && status == false)
+        && !status)
     {
         unsafe {
             connection.Disconnect().map_err(|e| {
@@ -250,7 +247,7 @@ pub fn get_registry_key(adapter: &Adapter) -> Result<HKEY, MacchangerError> {
         unsafe {
             RegCloseKey(main_key_handle);
         }
-        return Err(MacchangerError::RegistryError);
+        Err(MacchangerError::RegistryError)
     }
 }
 
@@ -325,7 +322,7 @@ pub fn get_adapters() -> Result<Vec<Adapter>, MacchangerError> {
             mac_address: mac,
             instance_id: adapter_instance_id,
             real_adapter: PhysicalAdapter {
-                inner: unsafe { (*adapter_list).clone() },
+                inner: unsafe { *adapter_list },
             },
         });
 

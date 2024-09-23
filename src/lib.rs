@@ -71,7 +71,7 @@ pub fn list_interfaces() -> Result<Vec<Interface>, MacchangerError> {
         MacchangerPlatform::Windows => {
             let adapters: Vec<Interface> = get_adapters()?
                 .into_iter()
-                .map(|a| Interface::from(a))
+                .map(Interface::from)
                 .collect();
             Ok(adapters)
         }
