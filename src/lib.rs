@@ -1,16 +1,19 @@
 mod linux;
 mod util;
+#[cfg(target_os = "windows")]
 mod windows;
 
 use linux::change_mac_linux;
 use macaddr::MacAddr;
 use thiserror::Error;
 pub use util::generate_random_mac;
+#[cfg(target_os = "windows")]
 use windows::{change_mac_windows, get_adapters, Adapter};
 
 #[derive(Debug, Clone, Copy)]
 enum MacchangerPlatform {
     Linux,
+    #[cfg(target_os = "windows")]
     Windows,
 }
 
@@ -36,6 +39,7 @@ pub fn change_mac(mac: MacAddr, interface: String) -> Result<(), MacchangerError
     let platform = check_platform()?;
     match platform {
         MacchangerPlatform::Linux => change_mac_linux(mac, interface),
+        #[cfg(target_os = "windows")]
         MacchangerPlatform::Windows => change_mac_windows(mac, interface),
     }
 }
@@ -44,6 +48,7 @@ fn check_platform() -> Result<MacchangerPlatform, MacchangerError> {
     let os = std::env::consts::OS;
     match os {
         "linux" => Ok(MacchangerPlatform::Linux),
+        #[cfg(target_os = "windows")]
         "windows" => Ok(MacchangerPlatform::Windows),
         _ => Err(MacchangerError::UnsupportedPlatform),
     }
@@ -55,6 +60,7 @@ pub struct Interface {
     pub mac: MacAddr,
 }
 
+#[cfg(target_os = "windows")]
 impl From<Adapter> for Interface {
     fn from(value: Adapter) -> Self {
         Interface {
@@ -68,11 +74,10 @@ pub fn list_interfaces() -> Result<Vec<Interface>, MacchangerError> {
     let platform = check_platform()?;
     match platform {
         MacchangerPlatform::Linux => todo!(),
+        #[cfg(target_os = "windows")]
         MacchangerPlatform::Windows => {
-            let adapters: Vec<Interface> = get_adapters()?
-                .into_iter()
-                .map(Interface::from)
-                .collect();
+            let adapters: Vec<Interface> =
+                get_adapters()?.into_iter().map(Interface::from).collect();
             Ok(adapters)
         }
     }

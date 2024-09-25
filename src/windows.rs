@@ -94,7 +94,9 @@ fn change_adapter_connection_status(
     };
 
     for c in connection_array {
-        if let Some(c) = c { change_connection_status(&c, adapter, status)? }
+        if let Some(c) = c {
+            change_connection_status(&c, adapter, status)?
+        }
     }
 
     Ok(())
@@ -107,8 +109,7 @@ fn change_connection_status(
 ) -> Result<(), MacchangerError> {
     let properties = unsafe { *connection.GetProperties().unwrap() };
     dbg!(unsafe { properties.pszwDeviceName.to_string().unwrap() });
-    if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description
-        && status)
+    if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description && status)
     {
         unsafe {
             loop {
