@@ -5,7 +5,7 @@ use std::ptr;
 use windows::{
     core::{s, GUID, PCSTR, PSTR},
     Win32::{
-        Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS, S_OK},
+        Foundation::{ERROR_BUFFER_OVERFLOW, ERROR_SUCCESS, S_FALSE, S_OK},
         NetworkManagement::*,
         Networking::WinSock::*,
         System::{
@@ -31,7 +31,7 @@ pub fn change_mac_windows(mac: MacAddr, interface: String) -> Result<(), Macchan
             s!("NetworkAddress"),
             0,
             REG_SZ,
-            Some(mac.to_string().as_bytes()),
+            Some(mac.to_string().replace(":", "").as_bytes()),
         )
     };
 
@@ -50,7 +50,7 @@ fn change_adapter_connection_status(
 ) -> Result<(), MacchangerError> {
     let hr = unsafe { CoInitialize(None) };
 
-    if hr != S_OK {
+    if hr != S_OK && hr != S_FALSE {
         return Err(MacchangerError::ConnectionResetError);
     }
 
@@ -108,27 +108,23 @@ fn change_connection_status(
     status: bool,
 ) -> Result<(), MacchangerError> {
     let properties = unsafe { *connection.GetProperties().unwrap() };
-    dbg!(unsafe { properties.pszwDeviceName.to_string().unwrap() });
     if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description && status)
     {
+        println!("Trying to reconnect adapter!...");
         unsafe {
-            loop {
-                let res = connection.Connect().map_err(|e| {
-                    println!("{}", e.message());
-                    MacchangerError::ConnectionResetError
-                });
-                if res.is_ok() {
-                    break;
-                }
-            }
+            connection.Connect().map_err(|e| {
+                dbg!("{}", e.message());
+                MacchangerError::ConnectionResetError
+            })?;
         };
         return Ok(());
     } else if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description
         && !status)
     {
+        println!("Trying to disconnect adapter!...");
         unsafe {
             connection.Disconnect().map_err(|e| {
-                println!("{}", e.message());
+                dbg!("{}", e.message());
                 MacchangerError::ConnectionResetError
             })?
         };
