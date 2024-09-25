@@ -1,6 +1,6 @@
 use crate::MacchangerError;
 use macaddr::MacAddr;
-use std::ptr;
+use std::{borrow::BorrowMut, fmt::Debug, ptr, str::FromStr};
 
 use windows::{
     core::{s, GUID, PCSTR, PSTR},
@@ -21,13 +21,13 @@ use windows::{
 use IpHelper::{GetAdaptersAddresses, GAA_FLAG_INCLUDE_ALL_INTERFACES, IP_ADAPTER_ADDRESSES_LH};
 use WindowsFirewall::{IEnumNetConnection, INetConnection, INetConnectionManager, NCME_DEFAULT};
 
-pub fn change_mac_windows(mac: MacAddr, interface: String) -> Result<(), MacchangerError> {
+pub fn change_mac_windows(mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
     let adapter = get_adapter(interface)?;
-    let registry_key = get_registry_key(&adapter)?;
+    let adapter_registry_key = get_registry_key(&adapter)?;
 
     let res = unsafe {
         RegSetValueExA(
-            registry_key,
+            adapter_registry_key,
             s!("NetworkAddress"),
             0,
             REG_SZ,
@@ -41,11 +41,40 @@ pub fn change_mac_windows(mac: MacAddr, interface: String) -> Result<(), Macchan
     } else {
         return Err(MacchangerError::ConnectionResetError);
     }
-    Ok(())
+    Ok(mac)
+}
+
+pub fn restore_mac_windows(interface: String) -> Result<MacAddr, MacchangerError> {
+    let adapter = get_adapter(interface)?;
+    let adapter_registry_key = get_registry_key(&adapter)?;
+
+    let mut value_buffer: [u8; 1024] = [0; 1024];
+    let mut size_read: u32 = 1024;
+    let res = unsafe {
+        RegQueryValueExA(
+            adapter_registry_key,
+            s!("OriginalNetworkAddress"),
+            None,
+            None,
+            Some(value_buffer.as_mut_ptr()),
+            Some(size_read.borrow_mut()),
+        )
+    };
+
+    if res != ERROR_SUCCESS {
+        return Err(MacchangerError::RegistryError(res.to_hresult().message()));
+    }
+
+    let value = std::str::from_utf8(&value_buffer[0..(size_read - 1) as usize])
+        .map_err(|e| MacchangerError::RegistryError(e.to_string()))?;
+
+    let original_mac: MacAddr =
+        MacAddr::from_str(value).map_err(|_| MacchangerError::StringConversionError)?;
+    Ok(original_mac)
 }
 
 fn change_adapter_connection_status(
-    adapter: &Adapter,
+    adapter: &WindowsAdapter,
     status: bool,
 ) -> Result<(), MacchangerError> {
     let hr = unsafe { CoInitialize(None) };
@@ -93,10 +122,8 @@ fn change_adapter_connection_status(
             })?
     };
 
-    for c in connection_array {
-        if let Some(c) = c {
-            change_connection_status(&c, adapter, status)?
-        }
+    for c in connection_array.into_iter().flatten() {
+        change_connection_status(&c, adapter, status)?
     }
 
     Ok(())
@@ -104,7 +131,7 @@ fn change_adapter_connection_status(
 
 fn change_connection_status(
     connection: &INetConnection,
-    adapter: &Adapter,
+    adapter: &WindowsAdapter,
     status: bool,
 ) -> Result<(), MacchangerError> {
     let properties = unsafe { *connection.GetProperties().unwrap() };
@@ -135,7 +162,7 @@ fn change_connection_status(
     Ok(())
 }
 
-pub fn get_registry_key(adapter: &Adapter) -> Result<HKEY, MacchangerError> {
+pub fn get_registry_key(adapter: &WindowsAdapter) -> Result<HKEY, MacchangerError> {
     let mut main_key_handle: HKEY = HKEY(ptr::null_mut());
     let subkey: PCSTR =
         s!("SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}");
@@ -197,78 +224,70 @@ pub fn get_registry_key(adapter: &Adapter) -> Result<HKEY, MacchangerError> {
 
                     if res == ERROR_SUCCESS {
                         let value = std::str::from_utf8(&value_buffer[0..(size_read - 1) as usize])
-                            .map_err(|_| MacchangerError::RegistryError)?
+                            .map_err(|e| MacchangerError::RegistryError(e.to_string()))?
                             .to_owned();
                         if value == adapter.instance_id {
                             unsafe {
-                                RegCloseKey(main_key_handle);
+                                let _ = RegCloseKey(main_key_handle);
                             }
                             return Ok(sub_key_handle);
                         }
                     } else {
-                        dbg!(res);
-
                         unsafe {
-                            RegCloseKey(main_key_handle);
-                            RegCloseKey(sub_key_handle);
+                            let _ = RegCloseKey(main_key_handle);
+                            let _ = RegCloseKey(sub_key_handle);
                         }
-                        return Err(MacchangerError::RegistryError);
+                        return Err(MacchangerError::RegistryError(
+                            "Failed to close Registry keys".to_owned(),
+                        ));
                     }
                 } else {
-                    dbg!(res);
-
                     unsafe {
-                        RegCloseKey(main_key_handle);
-                        RegCloseKey(sub_key_handle);
+                        let _ = RegCloseKey(main_key_handle);
+                        let _ = RegCloseKey(sub_key_handle);
                     }
-                    return Err(MacchangerError::RegistryError);
+
+                    return Err(MacchangerError::RegistryError(
+                        "Failed to close Registry keys".to_owned(),
+                    ));
                 }
 
                 unsafe {
-                    RegCloseKey(sub_key_handle);
+                    let _ = RegCloseKey(sub_key_handle);
                 }
             } else {
-                dbg!(res);
-
                 unsafe {
-                    RegCloseKey(main_key_handle);
+                    let _ = RegCloseKey(main_key_handle);
                 }
-                return Err(MacchangerError::RegistryError);
+
+                return Err(MacchangerError::RegistryError(
+                    "Failed to close Registry keys".to_owned(),
+                ));
             }
 
             cchname = 1024;
             dw_index += 1;
         }
     } else {
-        dbg!(res);
         unsafe {
-            RegCloseKey(main_key_handle);
+            let _ = RegCloseKey(main_key_handle);
         }
-        Err(MacchangerError::RegistryError)
+
+        Err(MacchangerError::RegistryError(
+            "Failed to find necessary information in Registry".to_owned(),
+        ))
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Adapter {
+pub struct WindowsAdapter {
     pub name: String,
     pub description: String,
     pub mac_address: MacAddr,
     pub instance_id: String,
-    real_adapter: PhysicalAdapter,
 }
 
-#[derive(Clone)]
-struct PhysicalAdapter {
-    inner: IP_ADAPTER_ADDRESSES_LH,
-}
-
-impl std::fmt::Debug for PhysicalAdapter {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(unsafe { &self.inner.FriendlyName.to_string().unwrap() })
-    }
-}
-
-fn get_adapter(interface: String) -> Result<Adapter, MacchangerError> {
+fn get_adapter(interface: String) -> Result<WindowsAdapter, MacchangerError> {
     let adapters = get_adapters()?;
 
     adapters
@@ -278,9 +297,9 @@ fn get_adapter(interface: String) -> Result<Adapter, MacchangerError> {
         .ok_or(MacchangerError::Generic)
 }
 
-pub fn get_adapters() -> Result<Vec<Adapter>, MacchangerError> {
+pub fn get_adapters() -> Result<Vec<WindowsAdapter>, MacchangerError> {
     let (mut adapter_list, adapter_count) = get_raw_adapters()?;
-    let mut adapters: Vec<Adapter> = vec![];
+    let mut adapters: Vec<WindowsAdapter> = vec![];
 
     loop {
         if adapter_list.is_null() {
@@ -313,14 +332,11 @@ pub fn get_adapters() -> Result<Vec<Adapter>, MacchangerError> {
                 .map_err(|_| MacchangerError::AdapterError)?
         };
         let mac = MacAddr::from(mac_bytes);
-        adapters.push(Adapter {
+        adapters.push(WindowsAdapter {
             name: adapter_name,
             description: adapter_description,
             mac_address: mac,
             instance_id: adapter_instance_id,
-            real_adapter: PhysicalAdapter {
-                inner: unsafe { *adapter_list },
-            },
         });
 
         adapter_list = unsafe { (*adapter_list).Next };
