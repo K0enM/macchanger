@@ -51,8 +51,8 @@ fn main() -> Result<()> {
         Commands::ListAdapters => {
             let adapters = list_adapters()?;
             println!("Found {} adapters", adapters.len());
-            for windows_adapter in adapters {
-                println!("{}", windows_adapter.description);
+            for adapter in adapters {
+                println!("{}", adapter.name);
             }
         }
         Commands::Change { interface, mac } => {
@@ -63,8 +63,7 @@ fn main() -> Result<()> {
             let current_mac = change_mac(mac, interface.clone())?;
             println!(
                 "Successfully changed MAC address of interface {} to {}",
-                interface,
-                current_mac
+                interface, current_mac
             );
         }
         Commands::Restore { interface } => {
@@ -73,8 +72,7 @@ fn main() -> Result<()> {
             let current_mac = change_mac(original_mac, interface.clone())?;
             println!(
                 "Successfully changed MAC address of interface {} to {}",
-                interface,
-                current_mac
+                interface, current_mac
             );
         }
     }

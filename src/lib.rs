@@ -7,6 +7,7 @@ use linux::change_mac_linux;
 use macaddr::MacAddr;
 use thiserror::Error;
 pub use util::generate_random_mac;
+#[cfg(target_os = "windows")]
 use windows::restore_mac_windows;
 #[cfg(target_os = "windows")]
 use windows::{change_mac_windows, get_adapters, WindowsAdapter};
@@ -71,6 +72,19 @@ impl From<WindowsAdapter> for Interface {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Adapter {
+    pub name: String,
+}
+
+#[cfg(target_os = "windows")]
+impl From<WindowsAdapter> for Adapter {
+    fn from(value: WindowsAdapter) -> Self {
+        Adapter {
+            name: value.description,
+        }
+    }
+}
 pub fn list_interfaces() -> Result<Vec<Interface>, MacchangerError> {
     let platform = check_platform()?;
     match platform {
@@ -84,7 +98,7 @@ pub fn list_interfaces() -> Result<Vec<Interface>, MacchangerError> {
     }
 }
 
-pub fn list_adapters() -> Result<Vec<WindowsAdapter>, MacchangerError> {
+pub fn list_adapters() -> Result<Vec<Adapter>, MacchangerError> {
     let platform = check_platform()?;
     match platform {
         MacchangerPlatform::Linux => todo!(),
