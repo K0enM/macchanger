@@ -1,21 +1,17 @@
-use crate::{list_interfaces, MacchangerError};
-use hex::FromHex;
+use crate::MacchangerError;
 use macaddr::MacAddr;
-use nix::{
-    ifaddrs::{getifaddrs, InterfaceAddress, InterfaceAddressIterator},
-    sys::socket::SockaddrLike,
-};
-use pci_ids::{Device, Vendor};
-use std::{fs, io::Read, ops::ControlFlow, path::Path};
+use nix::ifaddrs::{getifaddrs, InterfaceAddress};
+use pci_ids::Device;
+use std::{fs, ops::ControlFlow, path::Path};
 use thiserror::Error;
 
-pub fn change_mac_linux(mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
+pub fn change_mac_linux(_mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
     let interfaces = list_interfaces_linux()?;
-    let interface: Option<&LinuxInterface> = interfaces
+    let _interface: Option<&LinuxInterface> = interfaces
         .into_iter()
         .filter(|i| i.name == interface)
         .collect::<Vec<LinuxInterface>>()
-        .get(0);
+        .first();
     todo!()
 }
 
@@ -28,18 +24,18 @@ pub struct LinuxInterface {
 #[derive(Debug, Error)]
 pub enum LinuxMacchangerError {
     #[error("Something went wrong with getting the SockaddrStorage from the interface")]
-    SocketaddrStorageError,
+    SocketaddrStorage,
     #[error("Something went wrong with getting the LinkAddr from the SockaddrStorage")]
-    LinkAddressError,
+    LinkAddress,
     #[error("Something went wrong with getting the MacAddres from the LinkAddr")]
-    MacAddressBytesError,
+    MacAddressBytes,
     #[error("Something went wrong with looking up the name of the network adapter: {0}")]
-    AdapterNameLookupError(String),
+    AdapterNameLookup(String),
 }
 
-impl Into<MacchangerError> for LinuxMacchangerError {
-    fn into(self) -> MacchangerError {
-        MacchangerError::LinuxError(self)
+impl From<LinuxMacchangerError> for MacchangerError {
+    fn from(val: LinuxMacchangerError) -> Self {
+        MacchangerError::LinuxError(val)
     }
 }
 
@@ -49,16 +45,16 @@ impl TryFrom<InterfaceAddress> for OptionalLinuxInterface {
     type Error = LinuxMacchangerError;
 
     fn try_from(interface: InterfaceAddress) -> Result<Self, Self::Error> {
-        if let None = &interface.address {
+        if interface.address.is_none() {
             return Ok(OptionalLinuxInterface(None));
         }
 
         let socket_address = match &interface.address {
             Some(address) => *address,
-            None => return Err(LinuxMacchangerError::SocketaddrStorageError),
+            None => return Err(LinuxMacchangerError::SocketaddrStorage),
         };
 
-        if let None = socket_address.as_link_addr() {
+        if socket_address.as_link_addr().is_none() {
             return Ok(OptionalLinuxInterface(None));
         }
 
@@ -68,7 +64,7 @@ impl TryFrom<InterfaceAddress> for OptionalLinuxInterface {
         }
         let mac = match link_address.addr() {
             Some(address_bytes) => MacAddr::from(address_bytes),
-            None => return Err(LinuxMacchangerError::MacAddressBytesError),
+            None => return Err(LinuxMacchangerError::MacAddressBytes),
         };
 
         let vendor_path = format!("/sys/class/net/{}/device/vendor", &interface.interface_name);
@@ -79,23 +75,23 @@ impl TryFrom<InterfaceAddress> for OptionalLinuxInterface {
             "Virtual Adapter (non-existent)"
         } else {
             let vendor_string = fs::read_to_string(vendor_path)
-                .map_err(|e| LinuxMacchangerError::AdapterNameLookupError(e.to_string()))?;
+                .map_err(|e| LinuxMacchangerError::AdapterNameLookup(e.to_string()))?;
 
             let vendor_string = vendor_string.trim_end();
             let vendor_string = vendor_string.strip_prefix("0x").unwrap();
 
             let vendor_id = u16::from_str_radix(vendor_string, 16)
-                .map_err(|e| LinuxMacchangerError::AdapterNameLookupError(e.to_string()))?;
+                .map_err(|e| LinuxMacchangerError::AdapterNameLookup(e.to_string()))?;
 
             let device_string = fs::read_to_string(device_path)
-                .map_err(|e| LinuxMacchangerError::AdapterNameLookupError(e.to_string()))?;
+                .map_err(|e| LinuxMacchangerError::AdapterNameLookup(e.to_string()))?;
             let device_string = device_string.trim_end();
             let device_string = device_string.strip_prefix("0x").unwrap();
             let device_id = u16::from_str_radix(device_string, 16)
-                .map_err(|e| LinuxMacchangerError::AdapterNameLookupError(e.to_string()))?;
+                .map_err(|e| LinuxMacchangerError::AdapterNameLookup(e.to_string()))?;
 
             let device = Device::from_vid_pid(vendor_id, device_id).ok_or(
-                LinuxMacchangerError::AdapterNameLookupError(
+                LinuxMacchangerError::AdapterNameLookup(
                     "Could not find network adapter by vendor id and device id".to_owned(),
                 ),
             )?;
@@ -125,18 +121,18 @@ pub fn list_interfaces_linux() -> Result<Vec<LinuxInterface>, MacchangerError> {
     let r = addrs.try_for_each(|i| {
         let interface_result = OptionalLinuxInterface::try_from(i);
         if interface_result.is_err() {
-            return ControlFlow::Break(interface_result);
+            ControlFlow::Break(interface_result)
         } else {
             let optional_interface = interface_result.unwrap();
             if let Some(interface) = optional_interface.0 {
                 interfaces.push(interface);
             }
 
-            return ControlFlow::Continue(());
+            ControlFlow::Continue(())
         }
     });
     if let ControlFlow::Break(Err(e)) = r {
-        return Err(MacchangerError::LinuxError(e));
+        Err(MacchangerError::LinuxError(e))
     } else {
         Ok(interfaces)
     }
@@ -148,18 +144,18 @@ pub fn list_adapters_linux() -> Result<Vec<LinuxAdapter>, MacchangerError> {
     let r = addrs.try_for_each(|i| {
         let interface_result = OptionalLinuxInterface::try_from(i);
         if interface_result.is_err() {
-            return ControlFlow::Break(interface_result);
+            ControlFlow::Break(interface_result)
         } else {
             let optional_interface = interface_result.unwrap();
             if let Some(interface) = optional_interface.0 {
                 adapters.push(interface.adapter);
             }
 
-            return ControlFlow::Continue(());
+            ControlFlow::Continue(())
         }
     });
     if let ControlFlow::Break(Err(e)) = r {
-        return Err(MacchangerError::LinuxError(e));
+        Err(MacchangerError::LinuxError(e))
     } else {
         Ok(adapters)
     }
