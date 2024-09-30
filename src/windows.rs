@@ -44,7 +44,7 @@ pub fn change_mac_windows(mac: MacAddr, interface: String) -> Result<MacAddr, Ma
     Ok(mac)
 }
 
-pub fn restore_mac_windows(interface: String) -> Result<MacAddr, MacchangerError> {
+pub fn get_hardware_mac_windows(interface: String) -> Result<MacAddr, MacchangerError> {
     let adapter = get_adapter(interface)?;
     let adapter_registry_key = get_registry_key(&adapter)?;
 

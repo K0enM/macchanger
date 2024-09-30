@@ -3,12 +3,15 @@ mod util;
 #[cfg(target_os = "windows")]
 mod windows;
 
-use linux::change_mac_linux;
+use linux::{
+    change_mac_linux, get_hardware_mac_linux, list_adapters_linux, list_interfaces_linux,
+    LinuxAdapter, LinuxInterface, LinuxMacchangerError,
+};
 use macaddr::MacAddr;
 use thiserror::Error;
 pub use util::generate_random_mac;
 #[cfg(target_os = "windows")]
-use windows::restore_mac_windows;
+use windows::get_hardware_mac_windows;
 #[cfg(target_os = "windows")]
 use windows::{change_mac_windows, get_adapters, WindowsAdapter};
 
@@ -25,7 +28,7 @@ pub enum MacchangerError {
     Generic,
     #[error("This platform is not supported")]
     UnsupportedPlatform,
-    #[error("Something went wrong when interacting with the registry")]
+    #[error("Something went wrong when interacting with the registry: {0}")]
     RegistryError(String),
     #[error("Something went wrong when converting to/from a rust String")]
     StringConversionError,
@@ -35,6 +38,10 @@ pub enum MacchangerError {
     AllocError,
     #[error("Something went wrong when working with the adapter list")]
     AdapterError,
+    #[error("Something went wrong when retrieving the interface list")]
+    ListInterfacesError,
+    #[error("Something went wrong with the Linux code: {0}")]
+    LinuxError(LinuxMacchangerError),
 }
 
 pub fn change_mac(mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
@@ -72,6 +79,15 @@ impl From<WindowsAdapter> for Interface {
     }
 }
 
+impl From<LinuxInterface> for Interface {
+    fn from(value: LinuxInterface) -> Self {
+        Interface {
+            name: value.name,
+            mac: value.adapter.mac,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Adapter {
     pub name: String,
@@ -85,10 +101,22 @@ impl From<WindowsAdapter> for Adapter {
         }
     }
 }
+
+impl From<LinuxAdapter> for Adapter {
+    fn from(value: LinuxAdapter) -> Self {
+        Adapter { name: value.name }
+    }
+}
 pub fn list_interfaces() -> Result<Vec<Interface>, MacchangerError> {
     let platform = check_platform()?;
     match platform {
-        MacchangerPlatform::Linux => todo!(),
+        MacchangerPlatform::Linux => {
+            let interfaces = list_interfaces_linux()?
+                .into_iter()
+                .map(Interface::from)
+                .collect();
+            Ok(interfaces)
+        }
         #[cfg(target_os = "windows")]
         MacchangerPlatform::Windows => {
             let adapters: Vec<Interface> =
@@ -101,7 +129,13 @@ pub fn list_interfaces() -> Result<Vec<Interface>, MacchangerError> {
 pub fn list_adapters() -> Result<Vec<Adapter>, MacchangerError> {
     let platform = check_platform()?;
     match platform {
-        MacchangerPlatform::Linux => todo!(),
+        MacchangerPlatform::Linux => {
+            let adapters = list_adapters_linux()?
+                .into_iter()
+                .map(Adapter::from)
+                .collect();
+            Ok(adapters)
+        }
         #[cfg(target_os = "windows")]
         MacchangerPlatform::Windows => {
             let adapters = get_adapters()?;
@@ -113,8 +147,8 @@ pub fn list_adapters() -> Result<Vec<Adapter>, MacchangerError> {
 pub fn get_hardware_mac(interface: String) -> Result<MacAddr, MacchangerError> {
     let platform = check_platform()?;
     match platform {
-        MacchangerPlatform::Linux => todo!(),
+        MacchangerPlatform::Linux => get_hardware_mac_linux(interface),
         #[cfg(target_os = "windows")]
-        MacchangerPlatform::Windows => restore_mac_windows(interface),
+        MacchangerPlatform::Windows => get_hardware_mac_windows(interface),
     }
 }
