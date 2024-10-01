@@ -1,18 +1,64 @@
 use crate::MacchangerError;
 use macaddr::MacAddr;
-use nix::ifaddrs::{getifaddrs, InterfaceAddress};
+use nix::{
+    errno::Errno,
+    ifaddrs::{getifaddrs, InterfaceAddress},
+    ioctl_readwrite_bad,
+    libc::{sockaddr, AF_LOCAL, SIOCSIFHWADDR},
+    sys::socket::{socket, SockFlag},
+};
 use pci_ids::Device;
-use std::{fs, ops::ControlFlow, path::Path};
+use std::{
+    fs,
+    io::Write,
+    ops::ControlFlow,
+    os::fd::{AsRawFd, OwnedFd},
+    path::Path,
+};
 use thiserror::Error;
 
-pub fn change_mac_linux(_mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
+pub fn change_mac_linux(mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
+    // temp(&interface)?;
     let interfaces = list_interfaces_linux()?;
-    let _interface: Option<&LinuxInterface> = interfaces
+    let temp_interface = interfaces
         .into_iter()
         .filter(|i| i.name == interface)
-        .collect::<Vec<LinuxInterface>>()
-        .first();
-    todo!()
+        .collect::<Vec<LinuxInterface>>();
+    let interface = temp_interface.first().unwrap();
+    let socket = get_socket()?;
+    let mut mac_bytes_i8: [i8; 14] = [0; 14];
+    for (i, b) in mac.as_bytes().iter().enumerate() {
+        mac_bytes_i8[i] = *b as i8;
+    }
+
+    let mut req = IfreqAddress {
+        name: [0; 16],
+        value: sockaddr {
+            sa_family: AF_LOCAL as u16,
+            sa_data: mac_bytes_i8,
+        },
+    };
+    req.name
+        .as_mut()
+        .write_all(interface.name.as_bytes())
+        .map_err(|e| LinuxMacchangerError::CreateIfreqAddress(e.to_string()))?;
+
+    ioctl_readwrite_bad!(set_mac_address, SIOCSIFHWADDR, IfreqAddress);
+    let res = unsafe {
+        set_mac_address(socket.as_raw_fd(), &mut req)
+            .map_err(LinuxMacchangerError::SetMacAddress)?
+    };
+    match res {
+        -1 => Err(LinuxMacchangerError::GetSocket(nix::Error::from_raw(-1)).into()),
+        _ => Ok(mac),
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct IfreqAddress {
+    name: [u8; 16],
+    value: sockaddr,
 }
 
 #[derive(Debug, Clone)]
@@ -27,10 +73,16 @@ pub enum LinuxMacchangerError {
     SocketaddrStorage,
     #[error("Something went wrong with getting the LinkAddr from the SockaddrStorage")]
     LinkAddress,
-    #[error("Something went wrong with getting the MacAddres from the LinkAddr")]
+    #[error("Something went wrong with getting the MacAddress from the LinkAddr")]
     MacAddressBytes,
     #[error("Something went wrong with looking up the name of the network adapter: {0}")]
     AdapterNameLookup(String),
+    #[error("Something went wrong with retrieving a socket: {0}")]
+    GetSocket(Errno),
+    #[error("Something went wrong with creating the IfreqAddress struct: {0}")]
+    CreateIfreqAddress(String),
+    #[error("Something went wrong with setting the MACAddress: {0}")]
+    SetMacAddress(Errno),
 }
 
 impl From<LinuxMacchangerError> for MacchangerError {
@@ -163,4 +215,15 @@ pub fn list_adapters_linux() -> Result<Vec<LinuxAdapter>, MacchangerError> {
 
 pub fn get_hardware_mac_linux(_interface: String) -> Result<MacAddr, MacchangerError> {
     todo!()
+}
+
+fn get_socket() -> Result<OwnedFd, LinuxMacchangerError> {
+    let res = socket(
+        nix::sys::socket::AddressFamily::Inet,
+        nix::sys::socket::SockType::Datagram,
+        SockFlag::empty(),
+        Some(nix::sys::socket::SockProtocol::Udp),
+    )
+    .map_err(LinuxMacchangerError::GetSocket)?;
+    Ok(res)
 }
