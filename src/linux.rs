@@ -5,7 +5,8 @@ use nix::{
     ifaddrs::{getifaddrs, InterfaceAddress},
     ioctl_read_bad, ioctl_readwrite_bad,
     libc::{
-        sockaddr, ARPHRD_ETHER, IFF_UP, IF_NAMESIZE, SIOCGIFFLAGS, SIOCSIFFLAGS, SIOCSIFHWADDR,
+        sockaddr, ARPHRD_ETHER, IFF_UP, IF_NAMESIZE, SIOCETHTOOL, SIOCGIFFLAGS, SIOCSIFFLAGS,
+        SIOCSIFHWADDR,
     },
     sys::socket::{socket, SockFlag},
 };
@@ -147,12 +148,14 @@ pub enum LinuxMacchangerError {
     GetSocket(Errno),
     #[error("Something went wrong with creating the IfreqAddress struct: {0}")]
     CreateIfreqAddress(String),
-    #[error("Something went wrong with setting the MACAddress: {0}")]
+    #[error("Something went wrong with setting the MacAddress: {0}")]
     SetMacAddress(Errno),
     #[error("Something went wrong with getting the ifr_flags: {0}")]
     GetIfrFlags(Errno),
     #[error("Something went worng with setting the ifr_flags: {0}")]
     SetIfrFlags(Errno),
+    #[error("Something went wrong with getting the permanent MacAddress: {0}")]
+    GetPermanentMac(Errno),
 }
 
 impl From<LinuxMacchangerError> for MacchangerError {
@@ -283,8 +286,51 @@ pub fn list_adapters_linux() -> Result<Vec<LinuxAdapter>, MacchangerError> {
     }
 }
 
-pub fn get_hardware_mac_linux(_interface: String) -> Result<MacAddr, MacchangerError> {
-    todo!()
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct EthtoolRequest {
+    cmd: u32,
+    size: u32,
+    data: [u8; 8],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct IfreqEthtool {
+    name: [u8; IF_NAMESIZE],
+    value: EthtoolRequest,
+}
+
+pub fn get_hardware_mac_linux(interface: String) -> Result<MacAddr, MacchangerError> {
+    let interfaces = list_interfaces_linux()?;
+    let temp_interface = interfaces
+        .into_iter()
+        .filter(|i| i.name == interface)
+        .collect::<Vec<LinuxInterface>>();
+    let interface = temp_interface.first().unwrap();
+    let socket = get_socket()?;
+    let epa = EthtoolRequest {
+        cmd: 0x00000020,
+        size: 8u32,
+        data: [0u8; 8],
+    };
+    let mut req = IfreqEthtool {
+        name: [0u8; IF_NAMESIZE],
+        value: epa,
+    };
+    req.name
+        .as_mut()
+        .write_all(interface.name.as_bytes())
+        .map_err(|e| LinuxMacchangerError::CreateIfreqAddress(e.to_string()))
+        .unwrap();
+
+    ioctl_read_bad!(get_permanent_mac_address, SIOCETHTOOL, IfreqEthtool);
+    let _ = unsafe {
+        get_permanent_mac_address(socket.as_raw_fd(), &mut req)
+            .map_err(LinuxMacchangerError::GetPermanentMac)?
+    };
+
+    Ok(MacAddr::from(epa.data))
 }
 
 fn get_socket() -> Result<OwnedFd, LinuxMacchangerError> {
