@@ -286,19 +286,21 @@ pub fn list_adapters_linux() -> Result<Vec<LinuxAdapter>, MacchangerError> {
     }
 }
 
+const MAX_ADDR_LEN: u32 = 32;
+
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct EthtoolRequest {
     cmd: u32,
     size: u32,
-    data: [u8; 8],
+    data: [u8; MAX_ADDR_LEN as usize],
 }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct IfreqEthtool {
     name: [u8; IF_NAMESIZE],
-    value: EthtoolRequest,
+    value: *mut EthtoolRequest,
 }
 
 pub fn get_hardware_mac_linux(interface: String) -> Result<MacAddr, MacchangerError> {
@@ -309,14 +311,14 @@ pub fn get_hardware_mac_linux(interface: String) -> Result<MacAddr, MacchangerEr
         .collect::<Vec<LinuxInterface>>();
     let interface = temp_interface.first().unwrap();
     let socket = get_socket()?;
-    let epa = EthtoolRequest {
+    let mut epa = EthtoolRequest {
         cmd: 0x00000020,
-        size: 8u32,
-        data: [0u8; 8],
+        size: MAX_ADDR_LEN,
+        data: [0u8; MAX_ADDR_LEN as usize],
     };
     let mut req = IfreqEthtool {
         name: [0u8; IF_NAMESIZE],
-        value: epa,
+        value: &mut epa,
     };
     req.name
         .as_mut()
@@ -330,7 +332,19 @@ pub fn get_hardware_mac_linux(interface: String) -> Result<MacAddr, MacchangerEr
             .map_err(LinuxMacchangerError::GetPermanentMac)?
     };
 
-    Ok(MacAddr::from(epa.data))
+    match epa.size {
+        6 => {
+            let mac_data: [u8; 6] = epa.data[0..6].try_into().unwrap();
+            Ok(MacAddr::from(mac_data))
+        }
+        8 => {
+            let mac_data: [u8; 8] = epa.data[0..6].try_into().unwrap();
+            Ok(MacAddr::from(mac_data))
+        }
+        _ => Err(MacchangerError::LinuxError(
+            LinuxMacchangerError::MacAddressBytes,
+        )),
+    }
 }
 
 fn get_socket() -> Result<OwnedFd, LinuxMacchangerError> {
