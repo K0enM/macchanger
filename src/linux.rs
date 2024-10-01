@@ -3,8 +3,10 @@ use macaddr::MacAddr;
 use nix::{
     errno::Errno,
     ifaddrs::{getifaddrs, InterfaceAddress},
-    ioctl_readwrite_bad,
-    libc::{sockaddr, AF_LOCAL, SIOCSIFHWADDR},
+    ioctl_read_bad, ioctl_readwrite_bad,
+    libc::{
+        sockaddr, ARPHRD_ETHER, IFF_UP, IF_NAMESIZE, SIOCGIFFLAGS, SIOCSIFFLAGS, SIOCSIFHWADDR,
+    },
     sys::socket::{socket, SockFlag},
 };
 use pci_ids::Device;
@@ -31,34 +33,98 @@ pub fn change_mac_linux(mac: MacAddr, interface: String) -> Result<MacAddr, Macc
         mac_bytes_i8[i] = *b as i8;
     }
 
-    let mut req = IfreqAddress {
-        name: [0; 16],
-        value: sockaddr {
-            sa_family: AF_LOCAL as u16,
-            sa_data: mac_bytes_i8,
-        },
-    };
-    req.name
-        .as_mut()
-        .write_all(interface.name.as_bytes())
-        .map_err(|e| LinuxMacchangerError::CreateIfreqAddress(e.to_string()))?;
+    let status = change_interface_active(interface, false)?;
+    assert!(!status);
 
+    let mut req = IfreqAddress::from(interface);
+    // Set the new MAC address bytes
+    req.value.sa_data = mac_bytes_i8;
     ioctl_readwrite_bad!(set_mac_address, SIOCSIFHWADDR, IfreqAddress);
-    let res = unsafe {
+    let _ = unsafe {
         set_mac_address(socket.as_raw_fd(), &mut req)
             .map_err(LinuxMacchangerError::SetMacAddress)?
     };
-    match res {
-        -1 => Err(LinuxMacchangerError::GetSocket(nix::Error::from_raw(-1)).into()),
-        _ => Ok(mac),
-    }
+
+    let status = change_interface_active(interface, true)?;
+    assert!(status);
+    Ok(mac)
+}
+
+fn change_interface_active(
+    interface: &LinuxInterface,
+    active: bool,
+) -> Result<bool, MacchangerError> {
+    let socket = get_socket()?;
+    let mut req = IfreqFlags::from(interface);
+    ioctl_read_bad!(get_ifr_flags, SIOCGIFFLAGS, IfreqFlags);
+    ioctl_readwrite_bad!(set_ifr_flags, SIOCSIFFLAGS, IfreqFlags);
+    let _ = unsafe {
+        get_ifr_flags(socket.as_raw_fd(), &mut req).map_err(LinuxMacchangerError::GetIfrFlags)?
+    };
+    match active {
+        false => {
+            req.value &= !IFF_UP as u16;
+        }
+        true => {
+            req.value |= IFF_UP as u16;
+        }
+    };
+    let _ = unsafe {
+        set_ifr_flags(socket.as_raw_fd(), &mut req).map_err(LinuxMacchangerError::SetIfrFlags)?
+    };
+    let status = req.value & IFF_UP as u16 == 1;
+    Ok(status)
 }
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 struct IfreqAddress {
-    name: [u8; 16],
+    name: [u8; IF_NAMESIZE],
     value: sockaddr,
+}
+
+impl From<&LinuxInterface> for IfreqAddress {
+    fn from(interface: &LinuxInterface) -> Self {
+        let mut req = IfreqAddress {
+            name: [0; IF_NAMESIZE],
+            value: sockaddr {
+                sa_family: ARPHRD_ETHER,
+                sa_data: [0; 14],
+            },
+        };
+        let mut mac_bytes_i8: [i8; 14] = [0; 14];
+        for (i, b) in interface.adapter.mac.as_bytes().iter().enumerate() {
+            mac_bytes_i8[i] = *b as i8;
+        }
+        req.name
+            .as_mut()
+            .write_all(interface.name.as_bytes())
+            .map_err(|e| LinuxMacchangerError::CreateIfreqAddress(e.to_string()))
+            .unwrap();
+        req
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IfreqFlags {
+    name: [u8; IF_NAMESIZE],
+    value: u16,
+}
+
+impl From<&LinuxInterface> for IfreqFlags {
+    fn from(interface: &LinuxInterface) -> Self {
+        let mut req = IfreqFlags {
+            name: [0; IF_NAMESIZE],
+            value: 0,
+        };
+
+        req.name
+            .as_mut()
+            .write_all(interface.name.as_bytes())
+            .map_err(|e| LinuxMacchangerError::CreateIfreqAddress(e.to_string()))
+            .unwrap();
+        req
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +149,10 @@ pub enum LinuxMacchangerError {
     CreateIfreqAddress(String),
     #[error("Something went wrong with setting the MACAddress: {0}")]
     SetMacAddress(Errno),
+    #[error("Something went wrong with getting the ifr_flags: {0}")]
+    GetIfrFlags(Errno),
+    #[error("Something went worng with setting the ifr_flags: {0}")]
+    SetIfrFlags(Errno),
 }
 
 impl From<LinuxMacchangerError> for MacchangerError {
