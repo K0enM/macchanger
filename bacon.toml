@@ -1,0 +1,11 @@
+[jobs.list-adapters]
+command = ["cargo", "run", "--", "list-adapters"]
+
+[jobs.list-interfaces]
+command = ["cargo", "run", "--", "list-interfaces"]
+
+[jobs.change-random-mac]
+command = ["cargo", "run", "--", "change", "wlp82s0"]
+
+[jobs.restore]
+command = ["cargo", "run", "--", "restore"]
