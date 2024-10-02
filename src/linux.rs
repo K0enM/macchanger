@@ -20,9 +20,9 @@ use std::{
 };
 use thiserror::Error;
 
-pub fn change_mac_linux(mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
+pub fn change_mac(mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
     // temp(&interface)?;
-    let interfaces = list_interfaces_linux()?;
+    let interfaces = list_interfaces()?;
     let temp_interface = interfaces
         .into_iter()
         .filter(|i| i.name == interface)
@@ -240,7 +240,7 @@ pub struct LinuxAdapter {
     pub mac: MacAddr,
 }
 
-pub fn list_interfaces_linux() -> Result<Vec<LinuxInterface>, MacchangerError> {
+pub fn list_interfaces() -> Result<Vec<LinuxInterface>, MacchangerError> {
     let mut addrs = getifaddrs().map_err(|_| MacchangerError::ListInterfacesError)?;
     let mut interfaces: Vec<LinuxInterface> = vec![];
     let r = addrs.try_for_each(|i| {
@@ -263,7 +263,7 @@ pub fn list_interfaces_linux() -> Result<Vec<LinuxInterface>, MacchangerError> {
     }
 }
 
-pub fn list_adapters_linux() -> Result<Vec<LinuxAdapter>, MacchangerError> {
+pub fn list_adapters() -> Result<Vec<LinuxAdapter>, MacchangerError> {
     let mut addrs = getifaddrs().map_err(|_| MacchangerError::ListInterfacesError)?;
     let mut adapters: Vec<LinuxAdapter> = vec![];
     let r = addrs.try_for_each(|i| {
@@ -303,8 +303,8 @@ struct IfreqEthtool {
     value: *mut EthtoolRequest,
 }
 
-pub fn get_hardware_mac_linux(interface: String) -> Result<MacAddr, MacchangerError> {
-    let interfaces = list_interfaces_linux()?;
+pub fn get_hardware_mac(interface: String) -> Result<MacAddr, MacchangerError> {
+    let interfaces = list_interfaces()?;
     let temp_interface = interfaces
         .into_iter()
         .filter(|i| i.name == interface)

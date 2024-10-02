@@ -21,7 +21,7 @@ use windows::{
 use IpHelper::{GetAdaptersAddresses, GAA_FLAG_INCLUDE_ALL_INTERFACES, IP_ADAPTER_ADDRESSES_LH};
 use WindowsFirewall::{IEnumNetConnection, INetConnection, INetConnectionManager, NCME_DEFAULT};
 
-pub fn change_mac_windows(mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
+pub fn change_mac(mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
     let adapter = get_adapter(interface)?;
     let adapter_registry_key = get_registry_key(&adapter)?;
 
@@ -44,7 +44,7 @@ pub fn change_mac_windows(mac: MacAddr, interface: String) -> Result<MacAddr, Ma
     Ok(mac)
 }
 
-pub fn get_hardware_mac_windows(interface: String) -> Result<MacAddr, MacchangerError> {
+pub fn get_hardware_mac(interface: String) -> Result<MacAddr, MacchangerError> {
     let adapter = get_adapter(interface)?;
     let adapter_registry_key = get_registry_key(&adapter)?;
 
@@ -297,7 +297,7 @@ fn get_adapter(interface: String) -> Result<WindowsAdapter, MacchangerError> {
         .ok_or(MacchangerError::Generic)
 }
 
-pub fn get_adapters() -> Result<Vec<WindowsAdapter>, MacchangerError> {
+pub fn list_adapters() -> Result<Vec<WindowsAdapter>, MacchangerError> {
     let (mut adapter_list, adapter_count) = get_raw_adapters()?;
     let mut adapters: Vec<WindowsAdapter> = vec![];
 
@@ -358,6 +358,66 @@ pub fn get_adapters() -> Result<Vec<WindowsAdapter>, MacchangerError> {
     Ok(adapters)
 }
 
+pub fn list_interfaces() -> Result<Vec<WindowsAdapter>, MacchangerError> {
+    let (mut adapter_list, adapter_count) = get_raw_adapters()?;
+    let mut adapters: Vec<WindowsAdapter> = vec![];
+
+    loop {
+        if adapter_list.is_null() {
+            break;
+        }
+
+        let adapter_name = unsafe {
+            (*adapter_list)
+                .FriendlyName
+                .to_string()
+                .map_err(|_| MacchangerError::AdapterError)?
+        };
+        let adapter_description = unsafe {
+            (*adapter_list)
+                .Description
+                .to_string()
+                .map_err(|_| MacchangerError::AdapterError)?
+        };
+
+        let adapter_instance_id = unsafe {
+            (*adapter_list)
+                .AdapterName
+                .to_string()
+                .map_err(|_| MacchangerError::AdapterError)?
+        };
+
+        let mac_bytes: [u8; 6] = unsafe {
+            (*adapter_list).PhysicalAddress[..6]
+                .try_into()
+                .map_err(|_| MacchangerError::AdapterError)?
+        };
+        let mac = MacAddr::from(mac_bytes);
+        adapters.push(WindowsAdapter {
+            name: adapter_name,
+            description: adapter_description,
+            mac_address: mac,
+            instance_id: adapter_instance_id,
+        });
+
+        adapter_list = unsafe { (*adapter_list).Next };
+    }
+
+    unsafe {
+        std::alloc::dealloc(
+            adapter_list as *mut u8,
+            std::alloc::Layout::from_size_align(
+                adapter_count
+                    .try_into()
+                    .map_err(|_| MacchangerError::Generic)?,
+                core::mem::align_of::<IP_ADAPTER_ADDRESSES_LH>(),
+            )
+            .map_err(|_| MacchangerError::AllocError)?,
+        )
+    }
+
+    Ok(adapters)
+}
 fn get_raw_adapters() -> Result<(*mut IP_ADAPTER_ADDRESSES_LH, u32), MacchangerError> {
     let mut buf_len: u32 = 0;
     let mut adapter_list: *mut IP_ADAPTER_ADDRESSES_LH = &mut IP_ADAPTER_ADDRESSES_LH::default();

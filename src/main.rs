@@ -2,7 +2,8 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use macaddr::MacAddr;
 use macchanger_lib::{
-    change_mac, generate_random_mac, get_hardware_mac, list_adapters, list_interfaces,
+    do_change_mac, generate_random_mac, retrieve_adapters, retrieve_hardware_mac,
+    retrieve_interfaces,
 };
 
 #[derive(Parser, Debug)]
@@ -32,14 +33,14 @@ fn main() -> Result<()> {
 
     match &args.command {
         Commands::ListInterfaces => {
-            let interfaces = list_interfaces()?;
+            let interfaces = retrieve_interfaces()?;
             println!("Found {} interfaces", interfaces.len());
             for interface in interfaces {
                 println!("{}", interface.name);
             }
         }
         Commands::ListMacs => {
-            let interfaces = list_interfaces()?;
+            let interfaces = retrieve_interfaces()?;
             println!("Found {} MAC addresses", interfaces.len());
             for interface in interfaces {
                 println!(
@@ -49,7 +50,7 @@ fn main() -> Result<()> {
             }
         }
         Commands::ListAdapters => {
-            let adapters = list_adapters()?;
+            let adapters = retrieve_adapters()?;
             println!("Found {} adapters", adapters.len());
             for adapter in adapters {
                 println!("{}", adapter.name);
@@ -60,16 +61,16 @@ fn main() -> Result<()> {
                 Some(mac) => *mac,
                 None => generate_random_mac(),
             };
-            let current_mac = change_mac(mac, interface.clone())?;
+            let current_mac = do_change_mac(mac, interface.clone())?;
             println!(
                 "Successfully changed MAC address of interface {} to {}",
                 interface, current_mac
             );
         }
         Commands::Restore { interface } => {
-            let original_mac = get_hardware_mac(interface.clone())?;
+            let original_mac = retrieve_hardware_mac(interface.clone())?;
             println!("Found original (hardware) MAC address of {}", original_mac);
-            let current_mac = change_mac(original_mac, interface.clone())?;
+            let current_mac = do_change_mac(original_mac, interface.clone())?;
             println!(
                 "Successfully changed MAC address of interface {} to {}",
                 interface, current_mac
