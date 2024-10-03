@@ -1,5 +1,5 @@
 #[cfg(target_os = "windows")]
-#[path("windows.rs")]
+#[path = "windows.rs"]
 mod os;
 
 mod util;
@@ -9,10 +9,9 @@ mod util;
 mod os;
 
 use macaddr::MacAddr;
-use os::{
-    change_mac, get_hardware_mac, list_adapters, list_interfaces, LinuxAdapter, LinuxInterface,
-    LinuxMacchangerError,
-};
+#[cfg(target_os = "linux")]
+use os::LinuxMacchangerError;
+use os::{change_mac, get_hardware_mac, list_adapters, list_interfaces};
 use thiserror::Error;
 pub use util::generate_random_mac;
 
@@ -34,7 +33,9 @@ pub enum MacchangerError {
     AdapterError,
     #[error("Something went wrong when retrieving the interface list")]
     ListInterfacesError,
+    #[cfg(target_os = "linux")]
     #[error("Something went wrong with the Linux code: {0}")]
+    #[cfg(target_os = "linux")]
     LinuxError(LinuxMacchangerError),
 }
 
@@ -48,54 +49,18 @@ pub struct Interface {
     pub mac: MacAddr,
 }
 
-#[cfg(target_os = "windows")]
-impl From<WindowsAdapter> for Interface {
-    fn from(value: WindowsAdapter) -> Self {
-        Interface {
-            name: value.name,
-            mac: value.mac_address,
-        }
-    }
-}
-
-impl From<LinuxInterface> for Interface {
-    fn from(value: LinuxInterface) -> Self {
-        Interface {
-            name: value.name,
-            mac: value.adapter.mac,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Adapter {
     pub name: String,
 }
 
-#[cfg(target_os = "windows")]
-impl From<WindowsAdapter> for Adapter {
-    fn from(value: WindowsAdapter) -> Self {
-        Adapter {
-            name: value.description,
-        }
-    }
-}
-
-impl From<LinuxAdapter> for Adapter {
-    fn from(value: LinuxAdapter) -> Self {
-        Adapter { name: value.name }
-    }
-}
 pub fn retrieve_interfaces() -> Result<Vec<Interface>, MacchangerError> {
-    let interfaces = list_interfaces()?
-        .into_iter()
-        .map(Interface::from)
-        .collect();
+    let interfaces = list_interfaces()?.into_iter().map(|a| a.into()).collect();
     Ok(interfaces)
 }
 
 pub fn retrieve_adapters() -> Result<Vec<Adapter>, MacchangerError> {
-    let adapters = list_adapters()?.into_iter().map(Adapter::from).collect();
+    let adapters = list_adapters()?.into_iter().map(|a| a.into()).collect();
     Ok(adapters)
 }
 

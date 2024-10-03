@@ -1,3 +1,5 @@
+use crate::Adapter;
+use crate::Interface;
 use crate::MacchangerError;
 use macaddr::MacAddr;
 use std::{borrow::BorrowMut, fmt::Debug, ptr, str::FromStr};
@@ -17,6 +19,23 @@ use windows::{
         },
     },
 };
+
+impl From<WindowsAdapter> for Interface {
+    fn from(value: WindowsAdapter) -> Self {
+        Self {
+            name: value.name,
+            mac: value.mac_address,
+        }
+    }
+}
+
+impl From<WindowsAdapter> for Adapter {
+    fn from(value: WindowsAdapter) -> Self {
+        Self {
+            name: value.description,
+        }
+    }
+}
 
 use IpHelper::{GetAdaptersAddresses, GAA_FLAG_INCLUDE_ALL_INTERFACES, IP_ADAPTER_ADDRESSES_LH};
 use WindowsFirewall::{IEnumNetConnection, INetConnection, INetConnectionManager, NCME_DEFAULT};
@@ -288,7 +307,7 @@ pub struct WindowsAdapter {
 }
 
 fn get_adapter(interface: String) -> Result<WindowsAdapter, MacchangerError> {
-    let adapters = get_adapters()?;
+    let adapters = list_adapters()?;
 
     adapters
         .iter()

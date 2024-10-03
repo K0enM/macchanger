@@ -1,4 +1,4 @@
-use crate::MacchangerError;
+use crate::{Adapter, Interface, MacchangerError};
 use macaddr::MacAddr;
 use nix::{
     errno::Errno,
@@ -134,6 +134,15 @@ pub struct LinuxInterface {
     pub adapter: LinuxAdapter,
 }
 
+impl From<LinuxInterface> for Interface {
+    fn from(val: LinuxInterface) -> Self {
+        Interface {
+            name: val.name,
+            mac: val.adapter.mac,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum LinuxMacchangerError {
     #[error("Something went wrong with getting the SockaddrStorage from the interface")]
@@ -240,6 +249,11 @@ pub struct LinuxAdapter {
     pub mac: MacAddr,
 }
 
+impl From<LinuxAdapter> for Adapter {
+    fn from(val: LinuxAdapter) -> Self {
+        Adapter { name: val.name }
+    }
+}
 pub fn list_interfaces() -> Result<Vec<LinuxInterface>, MacchangerError> {
     let mut addrs = getifaddrs().map_err(|_| MacchangerError::ListInterfacesError)?;
     let mut interfaces: Vec<LinuxInterface> = vec![];
