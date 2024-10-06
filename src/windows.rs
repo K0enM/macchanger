@@ -156,7 +156,6 @@ fn change_connection_status(
     let properties = unsafe { *connection.GetProperties().unwrap() };
     if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description && status)
     {
-        println!("Trying to reconnect adapter!...");
         unsafe {
             connection.Connect().map_err(|e| {
                 dbg!("{}", e.message());
@@ -167,7 +166,6 @@ fn change_connection_status(
     } else if (unsafe { properties.pszwDeviceName.to_string().unwrap() } == adapter.description
         && !status)
     {
-        println!("Trying to disconnect adapter!...");
         unsafe {
             connection.Disconnect().map_err(|e| {
                 dbg!("{}", e.message());
