@@ -1,19 +1,24 @@
 [package]
-name = "macchanger"
-version = "0.1.0"
+name = "macchanger-cli"
+description = "A simple cli tool to change the MAC address of your network interface"
+repository = "https://github.com/K0enm/macchanger"
+version = "0.2.0"
 edition = "2021"
+license = "MIT"
 
 [dependencies]
 anyhow = "1.0.88"
 clap = { version = "4.5.17", features = ["derive"] }
 hex = "0.4.3"
 macaddr = "1.0.1"
-nix = { version = "0.29.0", features = ["ioctl", "net"] }
-pci-ids = "0.2.5"
 rand = "0.8.5"
 thiserror = "1.0.63"
 
-[dependencies.windows]
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.29.0", features = ["ioctl", "net"] }
+pci-ids = "0.2.5"
+
+[target.'cfg(windows)'.dependencies.windows]
 version = "0.58.0"
 features = [
   "Win32_NetworkManagement_IpHelper",
@@ -31,3 +36,9 @@ path = "src/lib.rs"
 [[bin]]
 name = "macchanger"
 path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+codegen-units = 1
+lto = "fat"
+strip = "symbols"

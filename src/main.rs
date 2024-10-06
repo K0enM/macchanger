@@ -16,14 +16,22 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Changes the MAC address of the given interface. If the mac parameter is not given, a random MAC address is used
     Change {
+        /// Interface to change the MAC address of
         interface: String,
+        /// Optional MAC address to change to
         mac: Option<MacAddr>,
     },
+    /// Lists all interfaces on the current system. (On Linux, it only shows interfaces with an associated MAC address)
     ListInterfaces,
+    /// Lists all network adatpers on the current system. (On Linux, it only shows phsyical network adapters)
     ListAdapters,
+    /// Lists all interfaces together with their MAC addresses
     ListMacs,
+    /// Restores the MAC address of the interface to the original (hardware-defined) one.
     Restore {
+        /// Interface to restore the orignal MAC address of
         interface: String,
     },
 }
