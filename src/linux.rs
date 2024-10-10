@@ -21,7 +21,6 @@ use std::{
 use thiserror::Error;
 
 pub fn change_mac(mac: MacAddr, interface: String) -> Result<MacAddr, MacchangerError> {
-    // temp(&interface)?;
     let interfaces = list_interfaces()?;
     let temp_interface = interfaces
         .into_iter()
